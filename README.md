@@ -15,4 +15,5 @@ class SoLuaBind 能够做的：<br>
 2，压入数组元素值，向lua环境中注册一个table类型的数组，下标从1开始；<br>
 3，压入键值对，向lua环境中注册一个table；<br>
 <br>
+在 main.cpp 中有详细的示范代码。<br>
 <br>
