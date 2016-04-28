@@ -17,3 +17,5 @@ class SoLuaBind 能够做的：<br>
 <br>
 在 main.cpp 中有详细的示范代码。<br>
 <br>
+进阶好帖 http://blog.csdn.net/oilcode/article/details/51086147<br>
+<br>
