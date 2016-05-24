@@ -1,11 +1,14 @@
-//-----------------------------------------------------------------------------
+﻿//-----------------------------------------------------------------------------
 #include "SoLuaBind.h"
 #include "SoLuaErrorHandle.h"
 //-----------------------------------------------------------------------------
 lua_State* SoLuaBind::ms_L = 0;
-SoLuaBind::stElement SoLuaBind::ms_kPushElementList[SoLuaBind_MaxCount_PushElement];
-SoLuaBind::stElement SoLuaBind::ms_kPopElementList[SoLuaBind_MaxCount_PopElement];
+SoLuaBind::stElement SoLuaBind::ms_kPushElementList[SoLuaBind_MaxCount];
+SoLuaBind::stElement SoLuaBind::ms_kPopElementList[SoLuaBind_MaxCount];
+int SoLuaBind::ms_nPushSize = 0;
+int SoLuaBind::ms_nPopSize = 0;
 int SoLuaBind::ms_nBindResultCount = 0;
+bool SoLuaBind::ms_bHandleError = false;
 //-----------------------------------------------------------------------------
 void SoLuaBind::InitLuaBind(lua_State* L)
 {
@@ -31,28 +34,41 @@ void SoLuaBind::ExecuteBind(lua_CFunction pBindFunc)
 	}
 	else
 	{
-		const char* pszErrorMsg = lua_tostring(ms_L, -1);
-		SoLuaErrorHandle::Print("SoLuaBind::ExecuteBind : %s", pszErrorMsg);
+		if (ms_bHandleError)
+		{
+			const char* pszErrorMsg = lua_tostring(ms_L, -1);
+			SoLuaErrorHandle::Print("SoLuaBind::ExecuteBind : %s", pszErrorMsg);
+		}
 		lua_pop(ms_L, 1); //把错误提示信息弹出栈
 	}
 }
 //-----------------------------------------------------------------------------
 bool SoLuaBind::FuncBegin()
 {
-	bool br = true;
 	//清零
-	ClearTemp();
+	ms_nPopSize = 0;
+	ms_nBindResultCount = 0;
+
 	//获取参数的个数
 	const int nCount = lua_gettop(ms_L);
+	if (nCount > SoLuaBind_MaxCount)
+	{
+		if (ms_bHandleError)
+		{
+			SoLuaErrorHandle::Print("SoLuaBind::FuncBegin : too many params");
+		}
+		return false;
+	}
+
+	bool br = true;
 	//取出所有的参数
-	int nPopCount = 0;
 	for (int i = -nCount; i < 0; ++i)
 	{
-		if (CopyResultValue(i, nPopCount) == false)
+		if (CopyResultValue(i, &(ms_kPopElementList[ms_nPopSize])) == false)
 		{
 			br = false;
 		}
-		++nPopCount;
+		++ms_nPopSize;
 	}
 	return br;
 }
@@ -60,7 +76,7 @@ bool SoLuaBind::FuncBegin()
 double SoLuaBind::GetDouble(int nIndex, double dfDefault)
 {
 	double dfValue = dfDefault;
-	if (IsValidPopIndex(nIndex))
+	if (nIndex >= 0 && nIndex < ms_nPopSize)
 	{
 		if (ms_kPopElementList[nIndex].nType == ElementType_double)
 		{
@@ -73,7 +89,7 @@ double SoLuaBind::GetDouble(int nIndex, double dfDefault)
 const char* SoLuaBind::GetString(int nIndex, const char* szDefault)
 {
 	const char* szValue = szDefault;
-	if (IsValidPopIndex(nIndex))
+	if (nIndex >= 0 && nIndex < ms_nPopSize)
 	{
 		if (ms_kPopElementList[nIndex].nType == ElementType_string)
 		{
@@ -86,7 +102,7 @@ const char* SoLuaBind::GetString(int nIndex, const char* szDefault)
 bool SoLuaBind::GetBool(int nIndex, bool bDefault)
 {
 	bool bValue = bDefault;
-	if (IsValidPopIndex(nIndex))
+	if (nIndex >= 0 && nIndex < ms_nPopSize)
 	{
 		if (ms_kPopElementList[nIndex].nType == ElementType_bool)
 		{
@@ -98,103 +114,81 @@ bool SoLuaBind::GetBool(int nIndex, bool bDefault)
 //--------------------------------------------------------------------
 void SoLuaBind::PushKey(double dfValue)
 {
-	const int nPushIndex = FindEmptyPushIndex();
-	if (nPushIndex == -1)
+	if (ms_nPushSize > SoLuaBind_MaxCount)
 	{
-		SoLuaErrorHandle::Print("SoLuaBind::PushKey : over flow");
 		return;
 	}
-	ms_kPushElementList[nPushIndex].nType = ElementType_double;
-	ms_kPushElementList[nPushIndex].dfValue = dfValue;
+	ms_kPushElementList[ms_nPushSize].nType = ElementType_double;
+	ms_kPushElementList[ms_nPushSize].dfValue = dfValue;
+	++ms_nPushSize;
 }
 //--------------------------------------------------------------------
 void SoLuaBind::PushKey(const char* szValue)
 {
-	const int nPushIndex = FindEmptyPushIndex();
-	if (nPushIndex == -1)
+	if (ms_nPushSize > SoLuaBind_MaxCount)
 	{
-		SoLuaErrorHandle::Print("SoLuaBind::PushKey : over flow");
 		return;
 	}
-	ms_kPushElementList[nPushIndex].nType = ElementType_string;
-	ms_kPushElementList[nPushIndex].szValue = szValue; //浅拷贝
+	ms_kPushElementList[ms_nPushSize].nType = ElementType_string;
+	ms_kPushElementList[ms_nPushSize].szValue = szValue;
+	++ms_nPushSize;
 }
 //--------------------------------------------------------------------
 void SoLuaBind::PushKey(bool bValue)
 {
-	const int nPushIndex = FindEmptyPushIndex();
-	if (nPushIndex == -1)
+	if (ms_nPushSize > SoLuaBind_MaxCount)
 	{
-		SoLuaErrorHandle::Print("SoLuaBind::PushKey : over flow");
 		return;
 	}
-	ms_kPushElementList[nPushIndex].nType = ElementType_bool;
-	ms_kPushElementList[nPushIndex].dfValue = bValue ? 1.0 : -1.0;
+	ms_kPushElementList[ms_nPushSize].nType = ElementType_bool;
+	ms_kPushElementList[ms_nPushSize].dfValue = bValue ? 1.0 : -1.0;
+	++ms_nPushSize;
 }
 //--------------------------------------------------------------------
 void SoLuaBind::PushValue(double dfValue)
 {
-	const int nPopIndex = FindEmptyPopIndex();
-	if (nPopIndex == -1)
+	if (ms_nPopSize > SoLuaBind_MaxCount)
 	{
-		SoLuaErrorHandle::Print("SoLuaBind::PushValue : over flow");
 		return;
 	}
-	ms_kPopElementList[nPopIndex].nType = ElementType_double;
-	ms_kPopElementList[nPopIndex].dfValue = dfValue;
+	ms_kPopElementList[ms_nPopSize].nType = ElementType_double;
+	ms_kPopElementList[ms_nPopSize].dfValue = dfValue;
+	++ms_nPopSize;
 }
 //--------------------------------------------------------------------
 void SoLuaBind::PushValue(const char* szValue)
 {
-	const int nPopIndex = FindEmptyPopIndex();
-	if (nPopIndex == -1)
+	if (ms_nPopSize > SoLuaBind_MaxCount)
 	{
-		SoLuaErrorHandle::Print("SoLuaBind::PushValue : over flow");
 		return;
 	}
-	ms_kPopElementList[nPopIndex].nType = ElementType_string;
-	ms_kPopElementList[nPopIndex].szValue = szValue; //浅拷贝
+	ms_kPopElementList[ms_nPopSize].nType = ElementType_string;
+	ms_kPopElementList[ms_nPopSize].szValue = szValue;
+	++ms_nPopSize;
 }
 //--------------------------------------------------------------------
 void SoLuaBind::PushValue(bool bValue)
 {
-	const int nPopIndex = FindEmptyPopIndex();
-	if (nPopIndex == -1)
+	if (ms_nPopSize > SoLuaBind_MaxCount)
 	{
-		SoLuaErrorHandle::Print("SoLuaBind::PushValue : over flow");
 		return;
 	}
-	ms_kPopElementList[nPopIndex].nType = ElementType_bool;
-	ms_kPopElementList[nPopIndex].dfValue = bValue ? 1.0 : -1.0;
+	ms_kPopElementList[ms_nPopSize].nType = ElementType_bool;
+	ms_kPopElementList[ms_nPopSize].dfValue = bValue ? 1.0 : -1.0;
+	++ms_nPopSize;
 }
 //-----------------------------------------------------------------------------
-bool SoLuaBind::ArrayEnd(const char* szArrayName, int nElementCount)
+bool SoLuaBind::ArrayEnd(const char* szArrayName)
 {
 	if (szArrayName == 0 || szArrayName[0] == 0)
 	{
 		return false;
 	}
-	if (nElementCount < 0)
-	{
-		SoLuaErrorHandle::Print("SoLuaBind::ArrayEnd : invalid element count [%d]", nElementCount);
-		nElementCount = 0;
-	}
-	if (nElementCount > SoLuaBind_MaxCount_PopElement)
-	{
-		SoLuaErrorHandle::Print("SoLuaBind::ArrayEnd : over flow [%d]", nElementCount);
-		nElementCount = SoLuaBind_MaxCount_PopElement;
-	}
-	lua_createtable(ms_L, nElementCount, 0); //创建一个table，并压入栈
-	const int nCount = (nElementCount != 0) ? nElementCount : SoLuaBind_MaxCount_PopElement;
-	for (int i = 0; i < nCount; ++i)
+
+	lua_createtable(ms_L, ms_nPopSize, 0); //创建一个table，并压入栈
+	for (int i = 0; i < ms_nPopSize; ++i)
 	{
 		const int theType = ms_kPopElementList[i].nType;
-		if (theType == ElementType_Invalid)
-		{
-			//遍历完毕
-			break;
-		}
-		//
 		switch (theType)
 		{
 		case ElementType_double:
@@ -227,44 +221,20 @@ bool SoLuaBind::ArrayEnd(const char* szArrayName, int nElementCount)
 	return true;
 }
 //-----------------------------------------------------------------------------
-bool SoLuaBind::HashEnd(const char* szHashName, int nElementCount)
+bool SoLuaBind::HashEnd(const char* szHashName)
 {
 	if (szHashName == 0 || szHashName[0] == 0)
 	{
 		return false;
 	}
-	if (nElementCount < 0)
-	{
-		SoLuaErrorHandle::Print("SoLuaBind::HashEnd : invalid element count [%d]", nElementCount);
-		nElementCount = 0;
-	}
-	if (nElementCount > SoLuaBind_MaxCount_PushElement)
-	{
-		SoLuaErrorHandle::Print("SoLuaBind::HashEnd : over flow [%d]", nElementCount);
-		nElementCount = SoLuaBind_MaxCount_PushElement;
-	}
-	lua_createtable(ms_L, 0, nElementCount); //创建一个table，并压入栈
-	const int nCount = (nElementCount != 0) ? nElementCount : SoLuaBind_MaxCount_PushElement;
+
+	lua_createtable(ms_L, 0, ms_nPushSize); //创建一个table，并压入栈
 	bool bPushFinish = false;
 	stElement* pElement[2];
-	for (int i = 0; i < nCount; ++i)
+	for (int i = 0; i < ms_nPushSize; ++i)
 	{
 		pElement[0] = &(ms_kPushElementList[i]);
 		pElement[1] = &(ms_kPopElementList[i]);
-
-		for (int j = 0; j < 2; ++j)
-		{
-			if (pElement[j]->nType == ElementType_Invalid)
-			{
-				//遍历完毕
-				bPushFinish = true;
-			}
-		}
-		if (bPushFinish == true)
-		{
-			//遍历完毕
-			break;
-		}
 		//
 		for (int k = 0; k < 2; ++k)
 		{
@@ -300,7 +270,7 @@ bool SoLuaBind::HashEnd(const char* szHashName, int nElementCount)
 	return true;
 }
 //-----------------------------------------------------------------------------
-bool SoLuaBind::CopyResultValue(const int nStackIndex, const int nPopElementIndex)
+bool SoLuaBind::CopyResultValue(const int nStackIndex, stElement* pElement)
 {
 	bool br = true;
 	const int luatype = lua_type(ms_L, nStackIndex);
@@ -308,82 +278,42 @@ bool SoLuaBind::CopyResultValue(const int nStackIndex, const int nPopElementInde
 	{
 	case LUA_TNUMBER:
 		{
-			double dfV = lua_tonumber(ms_L, nStackIndex);
-			ms_kPopElementList[nPopElementIndex].nType = ElementType_double;
-			ms_kPopElementList[nPopElementIndex].dfValue = dfV;
+			pElement->nType = ElementType_double;
+			pElement->dfValue = lua_tonumber(ms_L, nStackIndex);
 			break;
 		}
 	case LUA_TSTRING:
 		{
-			const char* szValue = lua_tostring(ms_L, nStackIndex);
-			ms_kPopElementList[nPopElementIndex].nType = ElementType_string;
-			ms_kPopElementList[nPopElementIndex].szValue = szValue; //浅拷贝
+			pElement->nType = ElementType_string;
+			pElement->szValue = lua_tostring(ms_L, nStackIndex);
 			break;
 		}
 	case LUA_TBOOLEAN:
 		{
-			int bV = lua_toboolean(ms_L, nStackIndex);
-			ms_kPopElementList[nPopElementIndex].nType = ElementType_bool;
-			ms_kPopElementList[nPopElementIndex].dfValue = bV ? 1.0 : -1.0;
+			pElement->nType = ElementType_bool;
+			const int bV = lua_toboolean(ms_L, nStackIndex);
+			pElement->dfValue = bV ? 1.0 : -1.0;
 			break;
 		}
 	case LUA_TNIL:
 		{
 			//脚本逻辑中可能会返回nil，这是正常情况，也要占用一个stElement。
-			ms_kPopElementList[nPopElementIndex].nType = ElementType_Invalid;
+			pElement->nType = ElementType_Invalid;
 			break;
 		}
 	default:
 		{
-			ms_kPopElementList[nPopElementIndex].nType = ElementType_Invalid;
+			pElement->nType = ElementType_Invalid;
 			br = false;
 			//
-			const char* szTypeName = lua_typename(ms_L, luatype);
-			SoLuaErrorHandle::Print("SoLuaBind::CopyResultValue : invalid output value type[%s]", szTypeName);
+			if (ms_bHandleError)
+			{
+				const char* szTypeName = lua_typename(ms_L, luatype);
+				SoLuaErrorHandle::Print("SoLuaBind::CopyResultValue : invalid output value type[%s]", szTypeName);
+			}
 			break;
 		}
 	}
 	return br;
-}
-//-----------------------------------------------------------------------------
-int SoLuaBind::FindEmptyPushIndex()
-{
-	int nPushIndex = -1;
-	for (int i = 0; i < SoLuaBind_MaxCount_PushElement; ++i)
-	{
-		if (ms_kPushElementList[i].nType == ElementType_Invalid)
-		{
-			nPushIndex = i;
-			break;
-		}
-	}
-	return nPushIndex;
-}
-//-----------------------------------------------------------------------------
-int SoLuaBind::FindEmptyPopIndex()
-{
-	int nPopIndex = -1;
-	for (int i = 0; i < SoLuaBind_MaxCount_PopElement; ++i)
-	{
-		if (ms_kPopElementList[i].nType == ElementType_Invalid)
-		{
-			nPopIndex = i;
-			break;
-		}
-	}
-	return nPopIndex;
-}
-//-----------------------------------------------------------------------------
-void SoLuaBind::ClearTemp()
-{
-	for (int i = 0; i < SoLuaBind_MaxCount_PushElement; ++i)
-	{
-		ms_kPushElementList[i].nType = ElementType_Invalid;
-	}
-	for (int i = 0; i < SoLuaBind_MaxCount_PopElement; ++i)
-	{
-		ms_kPopElementList[i].nType = ElementType_Invalid;
-	}
-	ms_nBindResultCount = 0;
 }
 //-----------------------------------------------------------------------------

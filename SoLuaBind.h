@@ -1,4 +1,4 @@
-//-----------------------------------------------------------------------------
+﻿//-----------------------------------------------------------------------------
 #ifndef _SoLuaBind_h_
 #define _SoLuaBind_h_
 //-----------------------------------------------------------------------------
@@ -10,9 +10,7 @@ extern "C"
 }
 //-----------------------------------------------------------------------------
 //每次执行lua栈操作时，最多压入多少个参数
-#define SoLuaBind_MaxCount_PushElement 10
-//每次执行lua栈操作时，最多有多少个返回值
-#define SoLuaBind_MaxCount_PopElement 10
+#define SoLuaBind_MaxCount 14
 //-----------------------------------------------------------------------------
 class SoLuaBind
 {
@@ -32,6 +30,9 @@ public:
 	//获取 ms_kPopElementList 中的元素。序号从0开始。
 	//这些函数主要用于获取函数参数。
 	static double GetDouble(int nIndex, double dfDefault=0.0f);
+	static float GetFloat(int nIndex, float fDefault=0.0f);
+	static unsigned int GetUInt(int nIndex, unsigned int uiDefault=0);
+	static int GetInt(int nIndex, int nDefault=0);
 	static const char* GetString(int nIndex, const char* szDefault="");
 	static bool GetBool(int nIndex, bool bDefault=false);
 	//依次逐个压入函数返回值
@@ -68,31 +69,17 @@ public:
 	//>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
 	//注册一个全局的数组型的table。
+	//使用 PushXXX 系列函数来压入Value。
 	//在lua中，数组的下标从1开始，本函数遵循这个规定。
 	static void ArrayBegin();
 	//--szArrayName 在lua环境中，该table的名字。
-	//--nElementCount 数组中元素的最大个数。用于预分配内存空间。如果不知道最大个数，可以传入0。
-	static bool ArrayEnd(const char* szArrayName, int nElementCount);
+	static bool ArrayEnd(const char* szArrayName);
 
 	//注册一个全局的哈希型的table。
 	//key可以是数字，也可以是字符串。
 	static void HashBegin();
 	//--szHashName 在lua环境中，该table的名字。
-	//--nElementCount table中键值对的最大个数。用于预分配内存空间。如果不知道最大个数，可以传入0。
-	static bool HashEnd(const char* szHashName, int nElementCount);
-
-private:
-	static bool IsValidPopIndex(int nIndex);
-	//把栈中的第nStackIndex个元素拷贝到本类中的第nPopElementIndex个ms_kPopElementList元素。	
-	static bool CopyResultValue(const int nStackIndex, const int nPopElementIndex);
-	//压入变量到 ms_kPushElementList 时，获取存储该变量的stElement的序号。
-	//返回-1表示没有找到空闲的stElement。
-	static int FindEmptyPushIndex();
-	//压入变量到 ms_kPopElementList 时，获取存储该变量的stElement的序号。
-	//返回-1表示没有找到空闲的stElement。
-	static int FindEmptyPopIndex();
-	//清除临时数据。
-	static void ClearTemp();
+	static bool HashEnd(const char* szHashName);
 
 private:
 	enum eElementType
@@ -112,16 +99,38 @@ private:
 	};
 
 private:
+	//把栈中的第nStackIndex个元素拷贝到pElement中。
+	static bool CopyResultValue(const int nStackIndex, stElement* pElement);
+
+private:
 	//lua环境
 	static lua_State* ms_L;
 	//依次存储参数
-	static stElement ms_kPushElementList[SoLuaBind_MaxCount_PushElement];
+	static stElement ms_kPushElementList[SoLuaBind_MaxCount];
 	//依次存储返回值
-	static stElement ms_kPopElementList[SoLuaBind_MaxCount_PopElement];
+	static stElement ms_kPopElementList[SoLuaBind_MaxCount];
+	static int ms_nPushSize;
+	static int ms_nPopSize;
 	//在lua绑定逻辑中使用的临时变量
 	static int ms_nBindResultCount;
-
+	//当遇到lua API报错时，是否打印错误信息。
+	static bool ms_bHandleError;
 };
+//-----------------------------------------------------------------------------
+inline float SoLuaBind::GetFloat(int nIndex, float fDefault)
+{
+	return (float)(GetDouble(nIndex, (double)fDefault));
+}
+//-----------------------------------------------------------------------------
+inline unsigned int SoLuaBind::GetUInt(int nIndex, unsigned int uiDefault)
+{
+	return (unsigned int)(GetDouble(nIndex, (double)uiDefault));
+}
+//-----------------------------------------------------------------------------
+inline int SoLuaBind::GetInt(int nIndex, int nDefault)
+{
+	return (int)(GetDouble(nIndex, (double)nDefault));
+}
 //-----------------------------------------------------------------------------
 inline void SoLuaBind::Return(double dfValue)
 {
@@ -207,17 +216,13 @@ inline void SoLuaBind::PushValue(int nValue)
 //-----------------------------------------------------------------------------
 inline void SoLuaBind::ArrayBegin()
 {
-	ClearTemp();
+	ms_nPopSize = 0;
 }
 //-----------------------------------------------------------------------------
 inline void SoLuaBind::HashBegin()
 {
-	ClearTemp();
-}
-//-----------------------------------------------------------------------------
-inline bool SoLuaBind::IsValidPopIndex(int nIndex)
-{
-	return (nIndex >= 0 && nIndex < SoLuaBind_MaxCount_PopElement);
+	ms_nPushSize = 0;
+	ms_nPopSize = 0;
 }
 //-----------------------------------------------------------------------------
 #endif //_SoLuaBind_h_

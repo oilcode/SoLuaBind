@@ -7,7 +7,6 @@ void main()
 {
 	SoLua::InitLua();
 	SoLuaBind::InitLuaBind(SoLua::GetLua());
-	SoLua::DumpStack();
 	//
 	SoLuaBind::ExecuteBind(luaRegisterMyFunc);
 	SoLua::DumpStack();
@@ -33,7 +32,7 @@ void main()
 	const char* szlocalString = SoLua::GetString(0, "");
 
 	//
-	SoLua::ExecuteTrunk("print(\"oil\")", 0);
+	SoLua::ExecuteChunk("print(\"oil\")", 0);
 	SoLua::DumpStack();
 
 	short ddd = 2;

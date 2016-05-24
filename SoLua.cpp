@@ -1,10 +1,10 @@
-//-----------------------------------------------------------------------------
-//1，用户可以压入SoLua_MaxCount_PushElement个参数（这些参数包括table名字，函数名字和函数参数），
+﻿//-----------------------------------------------------------------------------
+//1，用户可以压入SoLua_MaxCount个参数（这些参数包括table名字，函数名字和函数参数），
 //   然后执行CallEnd()调用lua脚本函数，得到的返回值都暂时存储在本类中，用户可以调用GetXX()得到返回值。
 //   必须严格按照这样的压入顺序：先压入table名字，再压入函数名字，然后压入函数参数。
 //   参数和返回值都必须是简单类型的变量。
 //2，用户可以指定table和key，得到键值对中的value。
-//   用户可以压入SoLua_MaxCount_PushElement个key（包括table名字和key名字），
+//   用户可以压入SoLua_MaxCount个key（包括table名字和key名字），
 //   然后执行FieldEnd()，得到的value都暂时存储在本类中，用户可以调用GetXX()得到value。
 //   必须严格按照这样的压入顺序：先压入table名字，再压入key名字。
 //   参数和返回值都必须是简单类型的变量。
@@ -17,6 +17,18 @@
 //   SetWindowWidth(theWindowWidth, theWindowID)
 //   正确的写法是 SetWindowWidth(get(0), get(1))
 //5，压入的值不能是NULL(nil)，因为NULL的值是0，Push(0)不能区分出是压入数字0还是压入NULL。
+//6，我打算设计第二种“获取table内键值对的value”的方法，后来发现这种方法不能实现。
+//   我的设想是这样：
+//   FieldBegin2(); //对ms_kElementList数组清零
+//   PushTable("table1"); //压入第一层table
+//   PushTable("table2"); //压入第二层table
+//   const char* szValue = GetFieldValueString("key1", defaultValue=""); //如果尚未压入table入栈，则调用lua API依次压入table入栈；然后获取"key1"的值。
+//   double dfValue = GetFieldValueDouble("key2", defaultValue=""); //如果尚未压入table入栈，则调用lua API依次压入table入栈；然后获取"key2"的值。
+//   ... //可以执行任意多次GetFieldValueXXX系列函数
+//   FieldEnd2(); //结束
+//   这种方法不能实现的原因，调用 GetFieldValueXXX 函数时会执行它的保护模式 PMode_GetFieldValueXXX ，
+//   每次执行保护模式，都会进入一个新的lua栈，每次都要重新压入table，获取value完毕，每次都要把table弹出栈，
+//   所以每次调用 GetFieldValueXXX 函数都会效率低下。放弃这种方式。
 //-----------------------------------------------------------------------------
 #include "SoLua.h"
 #include "SoLuaErrorHandle.h"
@@ -27,9 +39,9 @@
 #define SoLuaResultError 0
 //-----------------------------------------------------------------------------
 lua_State* SoLua::ms_L = 0;
-SoLua::stElement SoLua::ms_kPushElementList[SoLua_MaxCount_PushElement];
-SoLua::stElement SoLua::ms_kPopElementList[SoLua_MaxCount_PopElement];
-char SoLua::ms_szStringValueList[SoLua_MaxStringCount][SoLua_MaxStringSize];
+SoLua::stElement SoLua::ms_kElementList[SoLua_MaxCount];
+int SoLua::ms_nSize = 0;
+bool SoLua::ms_bHandleError = false;
 //-----------------------------------------------------------------------------
 bool SoLua::InitLua()
 {
@@ -52,7 +64,6 @@ bool SoLua::InitLua()
 		}
 		else
 		{
-			SoLuaErrorHandle::Print("SoLua::InitLua : lua_open() fail!");
 			br = false;
 		}
 	}
@@ -71,6 +82,7 @@ void SoLua::ReleaseLua()
 		lua_close(ms_L);
 		ms_L = 0;
 	}
+	ms_nSize = 0;
 }
 //-----------------------------------------------------------------------------
 bool SoLua::ExecuteFile(const char* pszLuaFile)
@@ -87,12 +99,12 @@ bool SoLua::ExecuteFile(const char* pszLuaFile)
 	//可以是二进制内容也可以是文本内容。
 	char* pFileBuff = 0;
 	int nFileSize = 0;
-	if (LoadFileToBuff(pszLuaFile, &pFileBuff, nFileSize) == false)
+	if (LoadFileToBuff(pszLuaFile, &pFileBuff, &nFileSize) == false)
 	{
 		return false;
 	}
 	//编译并执行。
-	bool br = ExecuteTrunk(pFileBuff, nFileSize);
+	bool br = ExecuteChunk(pFileBuff, nFileSize);
 	//释放缓存。
 	if (pFileBuff)
 	{
@@ -101,7 +113,7 @@ bool SoLua::ExecuteFile(const char* pszLuaFile)
 	return br;
 }
 //--------------------------------------------------------------------
-bool SoLua::ExecuteTrunk(const char* pBuff, int nBuffSize)
+bool SoLua::ExecuteChunk(const char* pBuff, int nBuffSize)
 {
 	if (ms_L == 0)
 	{
@@ -117,7 +129,7 @@ bool SoLua::ExecuteTrunk(const char* pBuff, int nBuffSize)
 	}
 
 	int nResult = SoLuaResultError;
-	lua_pushcfunction(ms_L, &PMode_ExecuteTrunk);
+	lua_pushcfunction(ms_L, &PMode_ExecuteChunk);
 	lua_pushlightuserdata(ms_L, (void*)pBuff);
 	lua_pushinteger(ms_L, nBuffSize);
 	if (lua_pcall(ms_L, 2, 1, 0) == 0)
@@ -178,89 +190,86 @@ void SoLua::DumpStack()
 	SoLuaErrorHandle::Print("SoLua::DumpStack : end");
 }
 //--------------------------------------------------------------------
+void SoLua::SetHandleError(bool bEnable)
+{
+	ms_bHandleError = bEnable;
+}
+//--------------------------------------------------------------------
 void SoLua::PushTable(const char* szTableName)
 {
 	if (szTableName == 0 || szTableName[0] == 0)
 	{
-		SoLuaErrorHandle::Print("SoLua::PushTable : szTableName is invalid");
 		return;
 	}
-	const int nPushIndex = FindEmptyPushIndex();
-	if (nPushIndex == -1)
+	if (ms_nSize >= SoLua_MaxCount)
 	{
-		SoLuaErrorHandle::Print("SoLua::PushTable : over flow");
 		return;
 	}
-	ms_kPushElementList[nPushIndex].nType = ElementType_string_TableName;
-	ms_kPushElementList[nPushIndex].szValue = szTableName;
+	ms_kElementList[ms_nSize].nType = ElementType_string_TableName;
+	ms_kElementList[ms_nSize].szValue = szTableName;
+	++ms_nSize;
 }
 //--------------------------------------------------------------------
 void SoLua::PushFunc(const char* szFuncName)
 {
 	if (szFuncName == 0 || szFuncName[0] == 0)
 	{
-		SoLuaErrorHandle::Print("SoLua::PushFunc : szFuncName is invalid");
 		return;
 	}
-	const int nPushIndex = FindEmptyPushIndex();
-	if (nPushIndex == -1)
+	if (ms_nSize >= SoLua_MaxCount)
 	{
-		SoLuaErrorHandle::Print("SoLua::PushFunc : over flow");
 		return;
 	}
-	ms_kPushElementList[nPushIndex].nType = ElementType_string_FuncName;
-	ms_kPushElementList[nPushIndex].szValue = szFuncName;
+	ms_kElementList[ms_nSize].nType = ElementType_string_FuncName;
+	ms_kElementList[ms_nSize].szValue = szFuncName;
+	++ms_nSize;
 }
 //--------------------------------------------------------------------
 void SoLua::Push(const char* szValue)
 {
 	if (szValue == 0)
 	{
-		SoLuaErrorHandle::Print("SoLua::Push : szValue is invalid");
 		return;
 	}
-	const int nPushIndex = FindEmptyPushIndex();
-	if (nPushIndex == -1)
+	if (ms_nSize >= SoLua_MaxCount)
 	{
-		SoLuaErrorHandle::Print("SoLua::Push : over flow");
 		return;
 	}
-	ms_kPushElementList[nPushIndex].nType = ElementType_string;
-	ms_kPushElementList[nPushIndex].szValue = szValue;
+	ms_kElementList[ms_nSize].nType = ElementType_string;
+	ms_kElementList[ms_nSize].szValue = szValue;
+	++ms_nSize;
 }
 //--------------------------------------------------------------------
 void SoLua::Push(double dfValue)
 {
-	const int nPushIndex = FindEmptyPushIndex();
-	if (nPushIndex == -1)
+	if (ms_nSize >= SoLua_MaxCount)
 	{
-		SoLuaErrorHandle::Print("SoLua::Push : over flow");
 		return;
 	}
-	ms_kPushElementList[nPushIndex].nType = ElementType_double;
-	ms_kPushElementList[nPushIndex].dfValue = dfValue;
+	ms_kElementList[ms_nSize].nType = ElementType_double;
+	ms_kElementList[ms_nSize].dfValue = dfValue;
+	++ms_nSize;
 }
 //--------------------------------------------------------------------
 void SoLua::Push(bool bValue)
 {
-	const int nPushIndex = FindEmptyPushIndex();
-	if (nPushIndex == -1)
+	if (ms_nSize >= SoLua_MaxCount)
 	{
-		SoLuaErrorHandle::Print("SoLua::Push : over flow");
 		return;
 	}
-	ms_kPushElementList[nPushIndex].nType = ElementType_bool;
-	ms_kPushElementList[nPushIndex].dfValue = bValue ? 1.0 : -1.0;
+	ms_kElementList[ms_nSize].nType = ElementType_bool;
+	ms_kElementList[ms_nSize].dfValue = bValue ? 1.0 : -1.0;
+	++ms_nSize;
 }
 //-----------------------------------------------------------------------------
 const char* SoLua::GetString(int nIndex, const char* szDefault)
 {
 	const char* szValue = szDefault;
-	if (IsValidPopIndex(nIndex))
+	if (nIndex >= 0 && nIndex < ms_nSize)
 	{
-		if (ms_kPopElementList[nIndex].nType == ElementType_string)
+		if (ms_kElementList[nIndex].nType == ElementType_string)
 		{
-			szValue = ms_kPopElementList[nIndex].szValue;
+			szValue = ms_kElementList[nIndex].szValue;
 		}
 	}
 	return szValue;
@@ -269,11 +278,11 @@ const char* SoLua::GetString(int nIndex, const char* szDefault)
 double SoLua::GetDouble(int nIndex, double dfDefault)
 {
 	double dfValue = dfDefault;
-	if (IsValidPopIndex(nIndex))
+	if (nIndex >= 0 && nIndex < ms_nSize)
 	{
-		if (ms_kPopElementList[nIndex].nType == ElementType_double)
+		if (ms_kElementList[nIndex].nType == ElementType_double)
 		{
-			dfValue = ms_kPopElementList[nIndex].dfValue;
+			dfValue = ms_kElementList[nIndex].dfValue;
 		}
 	}
 	return dfValue;
@@ -282,11 +291,11 @@ double SoLua::GetDouble(int nIndex, double dfDefault)
 bool SoLua::GetBool(int nIndex, bool bDefault)
 {
 	bool bValue = bDefault;
-	if (IsValidPopIndex(nIndex))
+	if (nIndex >= 0 && nIndex < ms_nSize)
 	{
-		if (ms_kPopElementList[nIndex].nType == ElementType_bool)
+		if (ms_kElementList[nIndex].nType == ElementType_bool)
 		{
-			bValue = (ms_kPopElementList[nIndex].dfValue > 0.0);
+			bValue = (ms_kElementList[nIndex].dfValue > 0.0);
 		}
 	}
 	return bValue;
@@ -336,8 +345,11 @@ bool SoLua::FieldEnd()
 //--------------------------------------------------------------------
 void SoLua::HandleLuaAPIError()
 {
-	const char* pszErrorMsg = lua_tostring(ms_L, -1);
-	SoLuaErrorHandle::Print("SoLua::HandlePCallError : %s", pszErrorMsg);
+	if (ms_bHandleError)
+	{
+		const char* pszErrorMsg = lua_tostring(ms_L, -1);
+		SoLuaErrorHandle::Print("SoLua::HandlePCallError : %s", pszErrorMsg);
+	}
 	lua_pop(ms_L, 1); //把错误提示信息弹出栈
 }
 //--------------------------------------------------------------------
@@ -347,7 +359,7 @@ int SoLua::PMode_OpenLibs(lua_State* L)
 	return 0;
 }
 //--------------------------------------------------------------------
-int SoLua::PMode_ExecuteTrunk(lua_State* L)
+int SoLua::PMode_ExecuteChunk(lua_State* L)
 {
 	int nFuncResult = SoLuaResultError;
 	const char* pBuff = (const char*)lua_touserdata(L, 1);
@@ -389,16 +401,19 @@ int SoLua::PMode_CallEnd(lua_State* L)
 	//找到函数名字
 	const char* pszFunc = 0;
 	const int nFuncNameIndex = nTableCount;
-	if (nFuncNameIndex >= 0 && nFuncNameIndex < SoLua_MaxCount_PushElement)
+	if (nFuncNameIndex >= 0 && nFuncNameIndex < ms_nSize)
 	{
-		if (ms_kPushElementList[nFuncNameIndex].nType == ElementType_string_FuncName)
+		if (ms_kElementList[nFuncNameIndex].nType == ElementType_string_FuncName)
 		{
-			pszFunc = ms_kPushElementList[nFuncNameIndex].szValue;
+			pszFunc = ms_kElementList[nFuncNameIndex].szValue;
 		}
 	}
 	if (pszFunc == 0)
 	{
-		SoLuaErrorHandle::Print("SoLua::PMode_CallEnd : Can not find the function name");
+		if (ms_bHandleError)
+		{
+			SoLuaErrorHandle::Print("SoLua::PMode_CallEnd : Can not find the function name");
+		}
 		lua_pushinteger(L, SoLuaResultError);
 		return 1;
 	}
@@ -414,7 +429,10 @@ int SoLua::PMode_CallEnd(lua_State* L)
 	if (lua_isfunction(L, -1) == false)
 	{
 		lua_pop(L, nTableCount+1); //找不到这个function。把以前的table和刚压入的nil弹出栈
-		SoLuaErrorHandle::Print("SoLua::PMode_CallEnd : Can not find the function[%s]", pszFunc);
+		if (ms_bHandleError)
+		{
+			SoLuaErrorHandle::Print("SoLua::PMode_CallEnd : Can not find the function[%s]", pszFunc);
+		}
 		lua_pushinteger(L, SoLuaResultError);
 		return 1;
 	}
@@ -422,35 +440,33 @@ int SoLua::PMode_CallEnd(lua_State* L)
 	//压入参数
 	int nArgCount = 0;
 	const int nParamStartIndex = nFuncNameIndex + 1;
-	for (int i = nParamStartIndex; i < SoLua_MaxCount_PushElement; ++i)
+	for (int i = nParamStartIndex; i < ms_nSize; ++i)
 	{
-		const int theType = ms_kPushElementList[i].nType;
-		if (theType == ElementType_Invalid)
-		{
-			break;
-		}
-		//
+		const int theType = ms_kElementList[i].nType;
 		switch (theType)
 		{
 		case ElementType_double:
 			{
-				lua_pushnumber(L, ms_kPushElementList[i].dfValue);
+				lua_pushnumber(L, ms_kElementList[i].dfValue);
 				break;
 			}
 		case ElementType_string:
 			{
-				lua_pushstring(L, ms_kPushElementList[i].szValue);
+				lua_pushstring(L, ms_kElementList[i].szValue);
 				break;
 			}
 		case ElementType_bool:
 			{
-				int b = ms_kPushElementList[i].dfValue > 0.0 ? 1 : 0;
+				int b = ms_kElementList[i].dfValue > 0.0 ? 1 : 0;
 				lua_pushboolean(L, b);
 				break;
 			}
 		default:
 			{
-				SoLuaErrorHandle::Print("SoLua::PMode_CallEnd : invalid element type[%d]", theType);
+				if (ms_bHandleError)
+				{
+					SoLuaErrorHandle::Print("SoLua::PMode_CallEnd : invalid element type[%d]", theType);
+				}
 				break;
 			}
 		}
@@ -458,8 +474,8 @@ int SoLua::PMode_CallEnd(lua_State* L)
 	}
 	//>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 	//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
-	//没有办法预知有多少个返回值，所以返回值的个数总是SoLua_MaxCount_PopElement个。
-	const int nResultCount = SoLua_MaxCount_PopElement;
+	//没有办法预知有多少个返回值，所以返回值的个数总是 (SoLua_MaxCount - nTableCount) 个。
+	const int nResultCount = SoLua_MaxCount - nTableCount;
 	//执行lua函数，并把lua函数弹出栈；
 	//如果执行成功则把(nResultCount)个返回值压入栈；
 	//如果lua函数的实际返回值少于nResultCount个，则压入nil补全；
@@ -468,8 +484,11 @@ int SoLua::PMode_CallEnd(lua_State* L)
 	if (lua_pcall(L, nArgCount, nResultCount, 0) != 0)
 	{
 		//执行失败.
-		const char* pszErrorMsg = lua_tostring(L, -1);
-		SoLuaErrorHandle::Print("SoLua::PMode_CallEnd : lua_pcall fail [%s][%s]", pszFunc, pszErrorMsg);
+		if (ms_bHandleError)
+		{
+			const char* pszErrorMsg = lua_tostring(L, -1);
+			SoLuaErrorHandle::Print("SoLua::PMode_CallEnd : lua_pcall fail [%s][%s]", pszFunc, pszErrorMsg);
+		}
 		lua_pop(L, nTableCount+1); //把table和刚压入的错误提示信息弹出栈
 		lua_pushinteger(L, SoLuaResultError);
 		return 1;
@@ -478,12 +497,10 @@ int SoLua::PMode_CallEnd(lua_State* L)
 	//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 	//取出返回值
 	int nPopCount = 0;
-	int nStringValueCount = 0; //记录返回值中字符串类型的个数
 	for (int i = -nResultCount; i < 0; ++i)
 	{
 		//取出value
-		CopyResultValue(i, nPopCount, nStringValueCount);
-		//
+		CopyResultValue(i, &(ms_kElementList[nPopCount]));
 		++nPopCount;
 	}
 	//>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
@@ -502,40 +519,33 @@ int SoLua::PMode_FieldEnd(lua_State* L)
 		lua_pushinteger(L, SoLuaResultError);
 		return 1;
 	}
-	//记录返回值中字符串类型的个数
-	int nStringValueCount = 0;
+	//取出返回值
+	int nPopCount = 0;
 	const int nParamStartIndex = nTableCount;
-	for (int i = nParamStartIndex; i < SoLua_MaxCount_PushElement; ++i)
+	for (int i = nParamStartIndex; i < ms_nSize; ++i)
 	{
-		if (i >= SoLua_MaxCount_PopElement)
-		{
-			//返回值的个数已经达到最大个数
-			SoLuaErrorHandle::Print("SoLua::PMode_FieldEnd : pop element over flow");
-			break;
-		}
-		const int theType = ms_kPushElementList[i].nType;
-		if (theType == ElementType_Invalid)
-		{
-			//遍历key完毕
-			break;
-		}
-		else if (theType != ElementType_string)
+		const int theType = ms_kElementList[i].nType;
+		if (theType != ElementType_string)
 		{
 			//key必须是string类型
-			SoLuaErrorHandle::Print("SoLua::PMode_FieldEnd : invalid element type[%d]", theType);
+			if (ms_bHandleError)
+			{
+				SoLuaErrorHandle::Print("SoLua::PMode_FieldEnd : invalid element type[%d]", theType);
+			}
 			break;
 		}
 		//
 		if (nTableCount == 0)
 		{
-			lua_getglobal(L, ms_kPushElementList[i].szValue); //先压入key，找到value，然后弹出key并压入value；如果找不到则压入nil
+			lua_getglobal(L, ms_kElementList[i].szValue); //先压入key，找到value，然后弹出key并压入value；如果找不到则压入nil
 		}
 		else
 		{
-			lua_getfield(L, -1, ms_kPushElementList[i].szValue); //先压入key，找到value，然后弹出key并压入value；如果找不到则压入nil
+			lua_getfield(L, -1, ms_kElementList[i].szValue); //先压入key，找到value，然后弹出key并压入value；如果找不到则压入nil
 		}
 		//取出value
-		CopyResultValue(-1, i, nStringValueCount);
+		CopyResultValue(-1, &(ms_kElementList[nPopCount]));
+		++nPopCount;
 		//
 		lua_pop(L, 1); //把value弹出栈
 	}
@@ -545,7 +555,7 @@ int SoLua::PMode_FieldEnd(lua_State* L)
 	return 1;
 }
 //--------------------------------------------------------------------
-bool SoLua::LoadFileToBuff(const char* pszFile, char** ppBuff, int& nBuffSize)
+bool SoLua::LoadFileToBuff(const char* pszFile, char** ppBuff, int* pBuffSize)
 {
 	if (pszFile==0 || pszFile[0]==0 || ppBuff==0)
 	{
@@ -559,52 +569,46 @@ bool SoLua::LoadFileToBuff(const char* pszFile, char** ppBuff, int& nBuffSize)
 	}
 	//计算文件大小.
 	fseek(fp, 0, SEEK_END);
-	nBuffSize = (int)ftell(fp);
+	const int nBuffSize = (int)ftell(fp);
 	//分配Buff内存.
-	*ppBuff = (char*)malloc(nBuffSize);
-	if (*ppBuff == 0)
+	char* pBuff = (char*)malloc(nBuffSize);
+	if (pBuff == 0)
 	{
 		//申请内存失败。
 		fclose(fp);
-		nBuffSize = 0;
 		return false;
 	}
 	//填充Buff。
 	fseek(fp, 0, SEEK_SET);
 	const size_t sizeFileSize = (size_t)nBuffSize;
-	size_t nActuallyRead = fread(*ppBuff, 1, sizeFileSize, fp);
+	size_t nActuallyRead = fread(pBuff, 1, sizeFileSize, fp);
 	if (nActuallyRead != sizeFileSize)
 	{
-		free(*ppBuff);
-		*ppBuff = 0;
-		nBuffSize = 0;
+		free(pBuff);
 		fclose(fp);
 		return false;
 	}
 	//关闭文件。
 	fclose(fp);
-	return true;
-}
-//-----------------------------------------------------------------------------
-void SoLua::PushClear()
-{
-	for (int i = 0; i < SoLua_MaxCount_PushElement; ++i)
+	*ppBuff = pBuff;
+	if (pBuffSize)
 	{
-		ms_kPushElementList[i].nType = ElementType_Invalid;
+		*pBuffSize = nBuffSize;
 	}
+	return true;
 }
 //-----------------------------------------------------------------------------
 int SoLua::PushTableList()
 {
 	//记录已经压入了多少个table
 	int nTableCount = 0;
-	for (int i = 0; i < SoLua_MaxCount_PushElement; ++i)
+	for (int i = 0; i < ms_nSize; ++i)
 	{
-		if (ms_kPushElementList[i].nType != ElementType_string_TableName)
+		if (ms_kElementList[i].nType != ElementType_string_TableName)
 		{
 			break;
 		}
-		const char* szTableName = ms_kPushElementList[i].szValue;
+		const char* szTableName = ms_kElementList[i].szValue;
 		if (nTableCount == 0)
 		{
 			lua_getglobal(ms_L, szTableName); //从全局环境中找到szTableName并压入栈；如果找不到则压入nil
@@ -621,15 +625,18 @@ int SoLua::PushTableList()
 		else
 		{
 			lua_pop(ms_L, nTableCount+1); //找不到szTableName，把以前的table和刚压入的nil弹出栈
-			SoLuaErrorHandle::Print("SoLua::PushTableList : Can not find the table[%s]", szTableName);
 			nTableCount = -1;
+			if (ms_bHandleError)
+			{
+				SoLuaErrorHandle::Print("SoLua::PushTableList : Can not find the table[%s]", szTableName);
+			}
 			break;
 		}
 	}
 	return nTableCount;
 }
 //-----------------------------------------------------------------------------
-bool SoLua::CopyResultValue(const int nStackIndex, const int nPopElementIndex, int& nStringValueCount)
+bool SoLua::CopyResultValue(const int nStackIndex, SoLua::stElement* pElement)
 {
 	bool br = true;
 	const int luatype = lua_type(ms_L, nStackIndex);
@@ -637,68 +644,41 @@ bool SoLua::CopyResultValue(const int nStackIndex, const int nPopElementIndex, i
 	{
 	case LUA_TNUMBER:
 		{
-			double dfV = lua_tonumber(ms_L, nStackIndex);
-			ms_kPopElementList[nPopElementIndex].nType = ElementType_double;
-			ms_kPopElementList[nPopElementIndex].dfValue = dfV;
+			pElement->nType = ElementType_double;
+			pElement->dfValue = lua_tonumber(ms_L, nStackIndex);
 			break;
 		}
 	case LUA_TSTRING:
 		{
-			const char* szValue = lua_tostring(ms_L, nStackIndex);
-			ms_kPopElementList[nPopElementIndex].nType = ElementType_string;
-			//深拷贝
-			if (nStringValueCount < SoLua_MaxStringCount)
-			{
-				strncpy(ms_szStringValueList[nStringValueCount], szValue, SoLua_MaxStringSize);
-				ms_szStringValueList[nStringValueCount][SoLua_MaxStringSize-1] = 0;
-				ms_kPopElementList[nPopElementIndex].szValue = ms_szStringValueList[nStringValueCount];
-				++nStringValueCount;
-			}
-			else
-			{
-				ms_kPopElementList[nPopElementIndex].szValue = "";
-				br = false;
-				SoLuaErrorHandle::Print("SoLua::CopyResultValue : output string value count too much");
-			}
+			pElement->nType = ElementType_string;
+			pElement->szValue = lua_tostring(ms_L, nStackIndex);
 			break;
 		}
 	case LUA_TBOOLEAN:
 		{
-			int bV = lua_toboolean(ms_L, nStackIndex);
-			ms_kPopElementList[nPopElementIndex].nType = ElementType_bool;
-			ms_kPopElementList[nPopElementIndex].dfValue = bV ? 1.0 : -1.0;
+			pElement->nType = ElementType_bool;
+			const int bV = lua_toboolean(ms_L, nStackIndex);
+			pElement->dfValue = bV ? 1.0 : -1.0;
 			break;
 		}
 	case LUA_TNIL:
 		{
 			//脚本逻辑中可能会返回nil，这是正常情况，也要占用一个stElement。
-			ms_kPopElementList[nPopElementIndex].nType = ElementType_Invalid;
+			pElement->nType = ElementType_Invalid;
 			break;
 		}
 	default:
 		{
-			ms_kPopElementList[nPopElementIndex].nType = ElementType_Invalid;
+			pElement->nType = ElementType_Invalid;
 			br = false;
-			//
-			const char* szTypeName = lua_typename(ms_L, luatype);
-			SoLuaErrorHandle::Print("SoLua::CopyResultValue : invalid output value type[%s]", szTypeName);
+			if (ms_bHandleError)
+			{
+				const char* szTypeName = lua_typename(ms_L, luatype);
+				SoLuaErrorHandle::Print("SoLua::CopyResultValue : invalid output value type[%s]", szTypeName);
+			}
 			break;
 		}
 	}
 	return br;
-}
-//-----------------------------------------------------------------------------
-int SoLua::FindEmptyPushIndex()
-{
-	int nPushIndex = -1;
-	for (int i = 0; i < SoLua_MaxCount_PushElement; ++i)
-	{
-		if (ms_kPushElementList[i].nType == ElementType_Invalid)
-		{
-			nPushIndex = i;
-			break;
-		}
-	}
-	return nPushIndex;
 }
 //-----------------------------------------------------------------------------

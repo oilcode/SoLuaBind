@@ -1,4 +1,4 @@
-//-----------------------------------------------------------------------------
+﻿//-----------------------------------------------------------------------------
 #include "LuaBind_MyFunc.h"
 #include "SoLua.h"
 #include "MyFunc.h"
@@ -14,14 +14,14 @@ int luaGetWindowIDByName(lua_State* pLuaState)
 int luaGetWindowWidth(lua_State* pLuaState)
 {
 	SoLuaBind::FuncBegin();
-	SoLuaBind::Return(GetWindowWidth(SoLuaBind::GetDouble(0)));
+	SoLuaBind::Return(GetWindowWidth(SoLuaBind::GetInt(0)));
 	return SoLuaBind::FuncEnd();
 }
 //-----------------------------------------------------------------------------
 int luaSetWindowWidth(lua_State* pLuaState)
 {
 	SoLuaBind::FuncBegin();
-	SetWindowWidth(SoLuaBind::GetDouble(0), SoLuaBind::GetDouble(1));
+	SetWindowWidth(SoLuaBind::GetInt(0), SoLuaBind::GetFloat(1));
 	return SoLuaBind::FuncEnd();
 }
 //-----------------------------------------------------------------------------
@@ -30,7 +30,7 @@ int luaGetWindowWidthHeight(lua_State* pLuaState)
 	SoLuaBind::FuncBegin();
 	float fWidth = 0.0f;
 	float fHeight = 0.0f;
-	GetWindowWidthHeight(SoLuaBind::GetDouble(0), fWidth, fHeight);
+	GetWindowWidthHeight(SoLuaBind::GetInt(0), fWidth, fHeight);
 	SoLuaBind::Return(fWidth);
 	SoLuaBind::Return(fHeight);
 	return SoLuaBind::FuncEnd();
@@ -39,28 +39,28 @@ int luaGetWindowWidthHeight(lua_State* pLuaState)
 int luaSetWindowText(lua_State* pLuaState)
 {
 	SoLuaBind::FuncBegin();
-	SetWindowText(SoLuaBind::GetDouble(0), SoLuaBind::GetString(1));
+	SetWindowText(SoLuaBind::GetInt(0), SoLuaBind::GetString(1));
 	return SoLuaBind::FuncEnd();
 }
 //-----------------------------------------------------------------------------
 int luaGetWindowText(lua_State* pLuaState)
 {
 	SoLuaBind::FuncBegin();
-	SoLuaBind::Return(GetWindowText(SoLuaBind::GetDouble(0)));
+	SoLuaBind::Return(GetWindowText(SoLuaBind::GetInt(0)));
 	return SoLuaBind::FuncEnd();
 }
 //-----------------------------------------------------------------------------
 int luaWindowHelp_GetWindowPosX(lua_State* pLuaState)
 {
 	SoLuaBind::FuncBegin();
-	SoLuaBind::Return(WindowHelp::GetWindowPosX(SoLuaBind::GetDouble(0)));
+	SoLuaBind::Return(WindowHelp::GetWindowPosX(SoLuaBind::GetInt(0)));
 	return SoLuaBind::FuncEnd();
 }
 //-----------------------------------------------------------------------------
 int luaWindowHelp_SetWindowPosX(lua_State* pLuaState)
 {
 	SoLuaBind::FuncBegin();
-	WindowHelp::SetWindowPosX(SoLuaBind::GetDouble(0), SoLuaBind::GetDouble(1));
+	WindowHelp::SetWindowPosX(SoLuaBind::GetInt(0), SoLuaBind::GetFloat(1));
 	return SoLuaBind::FuncEnd();
 }
 //-----------------------------------------------------------------------------
@@ -69,7 +69,7 @@ int luaWindowHelp_GetWindowPos(lua_State* pLuaState)
 	SoLuaBind::FuncBegin();
 	float fPosX = 0.0f;
 	float fPosY = 0.0f;
-	WindowHelp::GetWindowPos(SoLuaBind::GetDouble(0), fPosX, fPosY);
+	WindowHelp::GetWindowPos(SoLuaBind::GetInt(0), fPosX, fPosY);
 	SoLuaBind::Return(fPosX);
 	SoLuaBind::Return(fPosY);
 	return SoLuaBind::FuncEnd();
@@ -78,14 +78,14 @@ int luaWindowHelp_GetWindowPos(lua_State* pLuaState)
 int luaWindowHelp_SetWindowTexture(lua_State* pLuaState)
 {
 	SoLuaBind::FuncBegin();
-	WindowHelp::SetWindowTexture(SoLuaBind::GetDouble(0), SoLuaBind::GetString(1));
+	WindowHelp::SetWindowTexture(SoLuaBind::GetInt(0), SoLuaBind::GetString(1));
 	return SoLuaBind::FuncEnd();
 }
 //-----------------------------------------------------------------------------
 int luaWindowHelp_GetWindowTexture(lua_State* pLuaState)
 {
 	SoLuaBind::FuncBegin();
-	SoLuaBind::Return(WindowHelp::GetWindowTexture(SoLuaBind::GetDouble(0)));
+	SoLuaBind::Return(WindowHelp::GetWindowTexture(SoLuaBind::GetInt(0)));
 	return SoLuaBind::FuncEnd();
 }
 //-----------------------------------------------------------------------------
@@ -118,7 +118,7 @@ int luaRegisterMyFunc(lua_State* pLuaState)
 	SoLuaBind::PushValue(WindowType_Button);
 	SoLuaBind::PushKey("WindowType_Text");
 	SoLuaBind::PushValue(WindowType_Text);
-	SoLuaBind::HashEnd("eWindowType", 2);
+	SoLuaBind::HashEnd("eWindowType");
 
 	//这一类的函数，都要返回0.
 	return 0;

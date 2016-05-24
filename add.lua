@@ -4,10 +4,10 @@
 --printddd(MaxWindowID)
 
 
-globalString = "globalString"
+globalString = "globalStringkk1"
 kkjjf = 
 {
-	localStringKey = "localString",
+	localStringKey = "localStringpp2",
 }
 
 print(MaxWindowID)
