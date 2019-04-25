@@ -265,7 +265,7 @@ void SoLua::Push(bool bValue)
 const char* SoLua::GetString(int nIndex, const char* szDefault)
 {
 	const char* szValue = szDefault;
-	if (nIndex >= 0 && nIndex < ms_nSize)
+	if (nIndex >= 0 && nIndex < SoLua_MaxCount)
 	{
 		if (ms_kElementList[nIndex].nType == ElementType_string)
 		{
@@ -278,7 +278,7 @@ const char* SoLua::GetString(int nIndex, const char* szDefault)
 double SoLua::GetDouble(int nIndex, double dfDefault)
 {
 	double dfValue = dfDefault;
-	if (nIndex >= 0 && nIndex < ms_nSize)
+	if (nIndex >= 0 && nIndex < SoLua_MaxCount)
 	{
 		if (ms_kElementList[nIndex].nType == ElementType_double)
 		{
@@ -291,7 +291,7 @@ double SoLua::GetDouble(int nIndex, double dfDefault)
 bool SoLua::GetBool(int nIndex, bool bDefault)
 {
 	bool bValue = bDefault;
-	if (nIndex >= 0 && nIndex < ms_nSize)
+	if (nIndex >= 0 && nIndex < SoLua_MaxCount)
 	{
 		if (ms_kElementList[nIndex].nType == ElementType_bool)
 		{
